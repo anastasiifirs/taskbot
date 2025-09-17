@@ -236,7 +236,7 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("help", help_command))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-# ConversationHandler для создания задачи
+# --- ConversationHandler для задачи ---
 task_conv = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex("^📝 Создать задачу$"), task)],
     states={
@@ -245,9 +245,20 @@ task_conv = ConversationHandler(
         DEADLINE_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_date_handler)],
         DEADLINE_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_time_handler)]
     },
-    fallbacks=[CommandHandler("cancel", lambda u,c: u.message.reply_text("Операция отменена."))]
+    fallbacks=[CommandHandler("cancel", lambda u, c: u.message.reply_text("Операция отменена."))],
+    per_message=True  # важно для корректной работы ConversationHandler
 )
+
+# --- Добавляем обработчики в правильном порядке ---
+app = Application.builder().token("8377447196:AAHPqerv_P6zgKvL9GIv_4mmz4ygSK5GOGE").build()
+
+# ConversationHandler первым, чтобы перехватывал сообщения до глобального хэндлера
 app.add_handler(task_conv)
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("help", help_command))
+
+# Глобальный хэндлер для кнопок ReplyKeyboardMarkup
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
 print("Бот запущен...")
 app.run_polling()
