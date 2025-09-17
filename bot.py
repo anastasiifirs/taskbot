@@ -15,10 +15,10 @@ TASKS_FILE = "tasks.csv"
 scheduler = BackgroundScheduler()
 scheduler.start()
 
-# --- ConversationHandler состояния ---
+# Состояния ConversationHandler
 TASK_TEXT, CHOOSE_USER, DEADLINE_DATE, DEADLINE_TIME, CHOOSE_USER_FOR_ROLE, CONFIRM_ROLE_CHANGE = range(6)
 
-# --- CSV функции ---
+# --- Работа с CSV ---
 def load_csv(filename, fieldnames):
     if not os.path.exists(filename):
         with open(filename, "w", newline='', encoding="utf-8") as f:
@@ -68,7 +68,6 @@ async def send_deadline_reminder(context):
     chat_id = context.job.data["chat_id"]
     task_text = context.job.data["task_text"]
     deadline = context.job.data["deadline"]
-    
     await context.bot.send_message(
         chat_id=chat_id,
         text=f"⏰ НАПОМИНАНИЕ: Задача '{task_text}' должна быть выполнена до {deadline}"
@@ -77,31 +76,33 @@ async def send_deadline_reminder(context):
 def schedule_deadline_reminders(task_id, chief_id, assignee_id, task_text, deadline_str):
     deadline = datetime.datetime.strptime(deadline_str, "%Y-%m-%d %H:%M")
     
-    # За день
+    # Напоминание за 1 день
     reminder_1_day = deadline - datetime.timedelta(days=1)
     if reminder_1_day > datetime.datetime.now():
         scheduler.add_job(
             send_deadline_reminder,
             DateTrigger(run_date=reminder_1_day),
-            kwargs={"data": {"task_id": task_id,"chat_id": assignee_id,"task_text": task_text,"deadline": deadline_str}}
+            kwargs={"data":{"task_id": task_id,"chat_id": assignee_id,"task_text": task_text,"deadline": deadline_str}}
         )
-    # За час
+    
+    # Напоминание за 1 час
     reminder_1_hour = deadline - datetime.timedelta(hours=1)
     if reminder_1_hour > datetime.datetime.now():
         scheduler.add_job(
             send_deadline_reminder,
             DateTrigger(run_date=reminder_1_hour),
-            kwargs={"data": {"task_id": task_id,"chat_id": assignee_id,"task_text": task_text,"deadline": deadline_str}}
+            kwargs={"data":{"task_id": task_id,"chat_id": assignee_id,"task_text": task_text,"deadline": deadline_str}}
         )
-    # Просрочено начальнику
+    
+    # После дедлайна для начальника
     reminder_after = deadline + datetime.timedelta(hours=1)
     scheduler.add_job(
         send_deadline_reminder,
         DateTrigger(run_date=reminder_after),
-        kwargs={"data": {"task_id": task_id,"chat_id": chief_id,"task_text": task_text,"deadline": f"{deadline_str} (ПРОСРОЧЕНО)"}}
+        kwargs={"data":{"task_id": task_id,"chat_id": chief_id,"task_text": task_text,"deadline": f"{deadline_str} (ПРОСРОЧЕНО)"}}
     )
 
-# --- Старт и помощь ---
+# --- Команды ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     users = load_users()
@@ -112,8 +113,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users.append(new_user)
         save_users(users)
         keyboard = get_main_keyboard("chief")
-        await update.message.reply_text("👨‍💼 Вы зарегистрированы как НАЧАЛЬНИК.", reply_markup=keyboard)
+        await update.message.reply_text("👨‍💼 Привет! Ты зарегистрирован как НАЧАЛЬНИК.", reply_markup=keyboard)
         return
+
     if not user:
         chiefs = [u for u in users if u["role"] == "chief"]
         chief_id = chiefs[0]["tg_id"] if chiefs else ""
@@ -121,22 +123,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         users.append(new_user)
         save_users(users)
         keyboard = get_main_keyboard("manager")
-        await update.message.reply_text("👋 Вы зарегистрированы как МЕНЕДЖЕР.", reply_markup=keyboard)
+        await update.message.reply_text("👋 Привет! Ты зарегистрирован как МЕНЕДЖЕР.", reply_markup=keyboard)
     else:
         keyboard = get_main_keyboard(user["role"])
-        await update.message.reply_text(f"🔑 С возвращением! Вы {user['role']}.", reply_markup=keyboard)
+        await update.message.reply_text(f"🔑 С возвращением! Ты {user['role']}.", reply_markup=keyboard)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     users = load_users()
     user = next((u for u in users if u["tg_id"] == tg_id), None)
     if user and user["role"] == "chief":
-        help_text = "👨‍💼 Команды начальника:\n📝 Создать задачу\n📋 Мои задачи\n👥 Сотрудники\n🔄 Изменить роли\n📊 Статистика"
+        help_text = ("👨‍💼 Команды для начальника:\n📝 Создать задачу\n📋 Мои задачи\n👥 Сотрудники\n🔄 Изменить роли\n📊 Статистика")
     else:
-        help_text = "👨‍💼 Команды сотрудника:\n📋 Мои задачи\n✅ Выполненные\n❓ Помощь"
+        help_text = ("👨‍💼 Команды для сотрудника:\n📋 Мои задачи\n✅ Выполненные\n❓ Помощь")
     await update.message.reply_text(help_text)
 
-# --- ConversationHandler для задачи ---
+# --- Создание задачи ---
 async def task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     users = load_users()
@@ -144,6 +146,7 @@ async def task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or user["role"] != "chief":
         await update.message.reply_text("❌ Только начальник может создавать задачи.")
         return ConversationHandler.END
+    context.user_data["conversation_active"] = True
     await update.message.reply_text("Введите текст задачи:")
     return TASK_TEXT
 
@@ -154,9 +157,10 @@ async def task_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     subs = [u for u in users if u["chief_id"] == tg_id and u["role"] == "manager"]
     if not subs:
         await update.message.reply_text("❌ У вас нет подчинённых.")
+        context.user_data["conversation_active"] = False
         return ConversationHandler.END
     buttons = [[InlineKeyboardButton(f"👤 {u['tg_id']}", callback_data=f"assign:{u['tg_id']}")] for u in subs]
-    await update.message.reply_text("Выберите менеджера:", reply_markup=InlineKeyboardMarkup(buttons))
+    await update.message.reply_text("Выберите сотрудника:", reply_markup=InlineKeyboardMarkup(buttons))
     return CHOOSE_USER
 
 async def assign_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -195,22 +199,43 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
     tasks.append(new_task)
     save_tasks(tasks)
 
-    # Планируем напоминания
+    # Напоминания
     schedule_deadline_reminders(task_id, chief_id, assignee_id, text, deadline_str)
 
-    # Отправляем менеджеру
+    # Уведомление менеджеру
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Выполнено", callback_data=f"done:{task_id}")]])
     try:
-        await context.bot.send_message(int(assignee_id),
-            f"📝 НОВАЯ ЗАДАЧА\n\n{text}\n⏰ Дедлайн: {deadline_str}", reply_markup=keyboard)
+        await context.bot.send_message(int(assignee_id), f"📝 НОВАЯ ЗАДАЧА\n\n{text}\n⏰ Дедлайн: {deadline_str}", reply_markup=keyboard)
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Не удалось отправить задачу: {e}")
+        await update.message.reply_text(f"⚠️ Не удалось отправить задачу сотруднику: {e}")
 
     await update.message.reply_text("✅ Задача создана и отправлена менеджеру.")
+    context.user_data["conversation_active"] = False
     return ConversationHandler.END
 
-# --- Обработка ReplyKeyboardMarkup (кнопки) ---
+# --- Отмечаем задачу выполненной ---
+async def mark_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    task_id = query.data.split(":")[1]
+    tasks = load_tasks()
+    task = next((t for t in tasks if t["id"] == task_id), None)
+    if not task:
+        await query.edit_message_text("❌ Задача не найдена.")
+        return
+    task["status"] = "done"
+    save_tasks(tasks)
+    try:
+        await context.bot.send_message(int(task["chief_id"]),
+            f"✅ Подчинённый {task['assignee_id']} выполнил задачу:\n{task['text']}\n⏰ Дедлайн был: {task['deadline']}")
+    except:
+        pass
+    await query.edit_message_text(f"✅ Задача выполнена: {task['text']}")
+
+# --- Глобальный обработчик текста ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("conversation_active"):  # игнорируем глобально во время Conversation
+        return
     text = update.message.text
     tg_id = str(update.effective_user.id)
     users = load_users()
@@ -218,7 +243,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         await update.message.reply_text("❌ Сначала /start")
         return
-
     if text == "📝 Создать задачу" and user["role"] == "chief":
         return await task(update, context)
     elif text == "📋 Мои задачи":
@@ -230,14 +254,36 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Неизвестная команда")
 
-# --- Запуск бота ---
-app = Application.builder().token("8377447196:AAHPqerv_P6zgKvL9GIv_4mmz4ygSK5GOGE").build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("help", help_command))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+# --- Просмотр задач ---
+async def show_tasks(update, context):
+    tg_id = str(update.effective_user.id)
+    tasks = load_tasks()
+    user_tasks = [t for t in tasks if t["assignee_id"] == tg_id or t["chief_id"] == tg_id]
+    if not user_tasks:
+        await update.message.reply_text("📭 Нет задач")
+        return
+    msg = ""
+    for t in user_tasks:
+        status = "✅" if t["status"] == "done" else "⏳"
+        msg += f"{status} Задача #{t['id']}: {t['text']}\n⏰ Дедлайн: {t['deadline']}\nСтатус: {t['status']}\n\n"
+    await update.message.reply_text(msg)
 
-# --- ConversationHandler для задачи ---
-task_conv = ConversationHandler(
+async def show_completed_tasks(update, context):
+    tg_id = str(update.effective_user.id)
+    tasks = load_tasks()
+    completed = [t for t in tasks if t["assignee_id"] == tg_id and t["status"] == "done"]
+    if not completed:
+        await update.message.reply_text("📭 Нет выполненных задач")
+        return
+    msg = "✅ ВЫПОЛНЕННЫЕ ЗАДАЧИ:\n\n"
+    for t in completed:
+        msg += f"🎯 Задача #{t['id']}: {t['text']}\n⏰ Дедлайн был: {t['deadline']}\n\n"
+    await update.message.reply_text(msg)
+
+# --- Настройка приложения ---
+app = Application.builder().token("8377447196:AAHPqerv_P6zgKvL9GIv_4mmz4ygSK5GOGE").build()
+
+task_conv_handler = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex("^📝 Создать задачу$"), task)],
     states={
         TASK_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, task_text_handler)],
@@ -245,19 +291,14 @@ task_conv = ConversationHandler(
         DEADLINE_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_date_handler)],
         DEADLINE_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_time_handler)]
     },
-    fallbacks=[CommandHandler("cancel", lambda u, c: u.message.reply_text("Операция отменена."))],
-    per_message=True  # важно для корректной работы ConversationHandler
+    fallbacks=[CommandHandler("cancel", lambda u,c: u.message.reply_text("Операция отменена."))],
+    per_message=True
 )
 
-# --- Добавляем обработчики в правильном порядке ---
-app = Application.builder().token("8377447196:AAHPqerv_P6zgKvL9GIv_4mmz4ygSK5GOGE").build()
-
-# ConversationHandler первым, чтобы перехватывал сообщения до глобального хэндлера
-app.add_handler(task_conv)
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("help", help_command))
-
-# Глобальный хэндлер для кнопок ReplyKeyboardMarkup
+app.add_handler(task_conv_handler)
+app.add_handler(CallbackQueryHandler(mark_done, pattern="^done:"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
 print("Бот запущен...")
