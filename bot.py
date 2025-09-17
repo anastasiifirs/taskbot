@@ -146,7 +146,6 @@ async def task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or user["role"] != "chief":
         await update.message.reply_text("❌ Только начальник может создавать задачи.")
         return ConversationHandler.END
-    context.user_data["conversation_active"] = True
     await update.message.reply_text("Введите текст задачи:")
     return TASK_TEXT
 
@@ -157,7 +156,6 @@ async def task_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     subs = [u for u in users if u["chief_id"] == tg_id and u["role"] == "manager"]
     if not subs:
         await update.message.reply_text("❌ У вас нет подчинённых.")
-        context.user_data["conversation_active"] = False
         return ConversationHandler.END
     buttons = [[InlineKeyboardButton(f"👤 {u['tg_id']}", callback_data=f"assign:{u['tg_id']}")] for u in subs]
     await update.message.reply_text("Выберите сотрудника:", reply_markup=InlineKeyboardMarkup(buttons))
@@ -210,7 +208,10 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(f"⚠️ Не удалось отправить задачу сотруднику: {e}")
 
     await update.message.reply_text("✅ Задача создана и отправлена менеджеру.")
-    context.user_data["conversation_active"] = False
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Операция отменена.")
     return ConversationHandler.END
 
 # --- Отмечаем задачу выполненной ---
@@ -231,28 +232,6 @@ async def mark_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
     await query.edit_message_text(f"✅ Задача выполнена: {task['text']}")
-
-# --- Глобальный обработчик текста ---
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("conversation_active"):  # игнорируем глобально во время Conversation
-        return
-    text = update.message.text
-    tg_id = str(update.effective_user.id)
-    users = load_users()
-    user = next((u for u in users if u["tg_id"] == tg_id), None)
-    if not user:
-        await update.message.reply_text("❌ Сначала /start")
-        return
-    if text == "📝 Создать задачу" and user["role"] == "chief":
-        return await task(update, context)
-    elif text == "📋 Мои задачи":
-        await show_tasks(update, context)
-    elif text == "✅ Выполненные" and user["role"] == "manager":
-        await show_completed_tasks(update, context)
-    elif text == "❓ Помощь":
-        await help_command(update, context)
-    else:
-        await update.message.reply_text("❌ Неизвестная команда")
 
 # --- Просмотр задач ---
 async def show_tasks(update, context):
@@ -280,6 +259,41 @@ async def show_completed_tasks(update, context):
         msg += f"🎯 Задача #{t['id']}: {t['text']}\n⏰ Дедлайн был: {t['deadline']}\n\n"
     await update.message.reply_text(msg)
 
+# --- Глобальный обработчик текста ---
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Проверяем, активен ли ConversationHandler
+    if context.user_data.get('_conversation_state'):
+        return
+    
+    text = update.message.text
+    tg_id = str(update.effective_user.id)
+    users = load_users()
+    user = next((u for u in users if u["tg_id"] == tg_id), None)
+    
+    if not user:
+        await update.message.reply_text("❌ Сначала /start")
+        return
+        
+    if text == "📝 Создать задачу" and user["role"] == "chief":
+        await task(update, context)
+    elif text == "📋 Мои задачи":
+        await show_tasks(update, context)
+    elif text == "✅ Выполненные" and user["role"] == "manager":
+        await show_completed_tasks(update, context)
+    elif text == "👥 Сотрудники" and user["role"] == "chief":
+        subs = [u for u in users if u["chief_id"] == tg_id]
+        if subs:
+            msg = "👥 Ваши сотрудники:\n"
+            for sub in subs:
+                msg += f"👤 {sub['tg_id']} - {sub['role']}\n"
+            await update.message.reply_text(msg)
+        else:
+            await update.message.reply_text("📭 Нет сотрудников")
+    elif text == "❓ Помощь":
+        await help_command(update, context)
+    else:
+        await update.message.reply_text("❌ Неизвестная команда")
+
 # --- Настройка приложения ---
 app = Application.builder().token("8377447196:AAHPqerv_P6zgKvL9GIv_4mmz4ygSK5GOGE").build()
 
@@ -291,8 +305,7 @@ task_conv_handler = ConversationHandler(
         DEADLINE_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_date_handler)],
         DEADLINE_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_time_handler)]
     },
-    fallbacks=[CommandHandler("cancel", lambda u,c: u.message.reply_text("Операция отменена."))],
-    per_message=True
+    fallbacks=[CommandHandler("cancel", cancel)]
 )
 
 app.add_handler(CommandHandler("start", start))
