@@ -295,7 +295,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Неизвестная команда")
 
 # --- Настройка приложения ---
-app = Application.builder().token("TELEGRAM_TOKEN").build()
+app = Application.builder().token(os.getenv("TELEGRAM_TOKEN")).build()
 
 task_conv_handler = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex("^📝 Создать задачу$"), task)],
