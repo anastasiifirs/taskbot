@@ -259,6 +259,53 @@ async def show_completed_tasks(update, context):
         msg += f"🎯 Задача #{t['id']}: {t['text']}\n⏰ Дедлайн был: {t['deadline']}\n\n"
     await update.message.reply_text(msg)
 
+# --- Новые функции для обработки кнопок ---
+async def show_employees(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+    users = load_users()
+    subs = [u for u in users if u["chief_id"] == tg_id]
+    
+    if not subs:
+        await update.message.reply_text("📭 У вас пока нет сотрудников")
+    else:
+        message = "👥 Ваши сотрудники:\n\n"
+        for sub in subs:
+            role_emoji = "👑" if sub["role"] == "chief" else "👤"
+            message += f"{role_emoji} ID: {sub['tg_id']} - {sub['role']}\n"
+        await update.message.reply_text(message)
+
+async def change_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+    users = load_users()
+    subs = [u for u in users if u["chief_id"] == tg_id]
+    
+    if not subs:
+        await update.message.reply_text("📭 У вас нет сотрудников для изменения ролей")
+        return
+    
+    await update.message.reply_text("🔄 Функция изменения ролей будет реализована в ближайшее время")
+
+async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+    tasks = load_tasks()
+    user_tasks = [t for t in tasks if t["chief_id"] == tg_id]
+    
+    if not user_tasks:
+        await update.message.reply_text("📊 Статистика:\nНет созданных задач")
+        return
+    
+    total_tasks = len(user_tasks)
+    completed_tasks = len([t for t in user_tasks if t["status"] == "done"])
+    pending_tasks = total_tasks - completed_tasks
+    
+    message = f"📊 Статистика:\n\n"
+    message += f"📋 Всего задач: {total_tasks}\n"
+    message += f"✅ Выполнено: {completed_tasks}\n"
+    message += f"⏳ В процессе: {pending_tasks}\n"
+    message += f"📈 Процент выполнения: {round((completed_tasks/total_tasks)*100 if total_tasks > 0 else 0)}%"
+    
+    await update.message.reply_text(message)
+
 # --- Глобальный обработчик текста ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Проверяем, активен ли ConversationHandler
@@ -281,14 +328,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "✅ Выполненные" and user["role"] == "manager":
         await show_completed_tasks(update, context)
     elif text == "👥 Сотрудники" and user["role"] == "chief":
-        subs = [u for u in users if u["chief_id"] == tg_id]
-        if subs:
-            msg = "👥 Ваши сотрудники:\n"
-            for sub in subs:
-                msg += f"👤 {sub['tg_id']} - {sub['role']}\n"
-            await update.message.reply_text(msg)
-        else:
-            await update.message.reply_text("📭 Нет сотрудников")
+        await show_employees(update, context)
+    elif text == "🔄 Изменить роли" and user["role"] == "chief":
+        await change_role(update, context)
+    elif text == "📊 Статистика" and user["role"] == "chief":
+        await show_statistics(update, context)
     elif text == "❓ Помощь":
         await help_command(update, context)
     else:
