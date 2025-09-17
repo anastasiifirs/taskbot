@@ -15,11 +15,10 @@ TASKS_FILE = "tasks.csv"
 scheduler = BackgroundScheduler()
 scheduler.start()
 
-# --- Состояния для ConversationHandler ---
+# --- ConversationHandler состояния ---
 TASK_TEXT, CHOOSE_USER, DEADLINE_DATE, DEADLINE_TIME, CHOOSE_USER_FOR_ROLE, CONFIRM_ROLE_CHANGE = range(6)
-ADD_USER, SET_ROLE_USER, SET_ROLE_CHOICE, SET_CHIEF_USER = range(6,10)
 
-# --- Работа с CSV ---
+# --- CSV функции ---
 def load_csv(filename, fieldnames):
     if not os.path.exists(filename):
         with open(filename, "w", newline='', encoding="utf-8") as f:
@@ -63,188 +62,192 @@ def get_main_keyboard(role):
         ]
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
 
-# --- Напоминания о дедлайнах ---
+# --- Напоминания ---
 async def send_deadline_reminder(context):
-    data = context.job.data
+    task_id = context.job.data["task_id"]
+    chat_id = context.job.data["chat_id"]
+    task_text = context.job.data["task_text"]
+    deadline = context.job.data["deadline"]
+    
     await context.bot.send_message(
-        chat_id=data["chat_id"],
-        text=f"⏰ НАПОМИНАНИЕ: Задача '{data['task_text']}' должна быть выполнена до {data['deadline']}"
+        chat_id=chat_id,
+        text=f"⏰ НАПОМИНАНИЕ: Задача '{task_text}' должна быть выполнена до {deadline}"
     )
 
 def schedule_deadline_reminders(task_id, chief_id, assignee_id, task_text, deadline_str):
     deadline = datetime.datetime.strptime(deadline_str, "%Y-%m-%d %H:%M")
-    reminders = [
-        ("1_day", deadline - datetime.timedelta(days=1)),
-        ("1_hour", deadline - datetime.timedelta(hours=1)),
-        ("after_deadline", deadline + datetime.timedelta(hours=1))
-    ]
-    for name, run_time in reminders:
-        if run_time > datetime.datetime.now():
-            chat_id = assignee_id if name != "after_deadline" else chief_id
-            display_deadline = deadline_str if name != "after_deadline" else f"{deadline_str} (ПРОСРОЧЕНО)"
-            scheduler.add_job(
-                send_deadline_reminder,
-                DateTrigger(run_date=run_time),
-                kwargs={"data":{"task_id":task_id,"chat_id":chat_id,"task_text":task_text,"deadline":display_deadline}}
-            )
+    
+    # За день
+    reminder_1_day = deadline - datetime.timedelta(days=1)
+    if reminder_1_day > datetime.datetime.now():
+        scheduler.add_job(
+            send_deadline_reminder,
+            DateTrigger(run_date=reminder_1_day),
+            kwargs={"data": {"task_id": task_id,"chat_id": assignee_id,"task_text": task_text,"deadline": deadline_str}}
+        )
+    # За час
+    reminder_1_hour = deadline - datetime.timedelta(hours=1)
+    if reminder_1_hour > datetime.datetime.now():
+        scheduler.add_job(
+            send_deadline_reminder,
+            DateTrigger(run_date=reminder_1_hour),
+            kwargs={"data": {"task_id": task_id,"chat_id": assignee_id,"task_text": task_text,"deadline": deadline_str}}
+        )
+    # Просрочено начальнику
+    reminder_after = deadline + datetime.timedelta(hours=1)
+    scheduler.add_job(
+        send_deadline_reminder,
+        DateTrigger(run_date=reminder_after),
+        kwargs={"data": {"task_id": task_id,"chat_id": chief_id,"task_text": task_text,"deadline": f"{deadline_str} (ПРОСРОЧЕНО)"}}
+    )
 
 # --- Старт и помощь ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     users = load_users()
-    user = next((u for u in users if u["tg_id"]==tg_id), None)
+    user = next((u for u in users if u["tg_id"] == tg_id), None)
+
     if not users:
-        users.append({"tg_id":tg_id,"role":"chief","chief_id":""})
+        new_user = {"tg_id": tg_id, "role": "chief", "chief_id": ""}
+        users.append(new_user)
         save_users(users)
         keyboard = get_main_keyboard("chief")
-        await update.message.reply_text("👨‍💼 Ты зарегистрирован как НАЧАЛЬНИК.", reply_markup=keyboard)
+        await update.message.reply_text("👨‍💼 Вы зарегистрированы как НАЧАЛЬНИК.", reply_markup=keyboard)
         return
     if not user:
-        chief_id = next((u["tg_id"] for u in users if u["role"]=="chief"), "")
-        users.append({"tg_id":tg_id,"role":"manager","chief_id":chief_id})
+        chiefs = [u for u in users if u["role"] == "chief"]
+        chief_id = chiefs[0]["tg_id"] if chiefs else ""
+        new_user = {"tg_id": tg_id, "role": "manager", "chief_id": chief_id}
+        users.append(new_user)
         save_users(users)
         keyboard = get_main_keyboard("manager")
-        await update.message.reply_text("👋 Ты зарегистрирован как МЕНЕДЖЕР.", reply_markup=keyboard)
+        await update.message.reply_text("👋 Вы зарегистрированы как МЕНЕДЖЕР.", reply_markup=keyboard)
     else:
         keyboard = get_main_keyboard(user["role"])
-        await update.message.reply_text(f"🔑 С возвращением! Ты {user['role']}.", reply_markup=keyboard)
+        await update.message.reply_text(f"🔑 С возвращением! Вы {user['role']}.", reply_markup=keyboard)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     users = load_users()
-    user = next((u for u in users if u["tg_id"]==tg_id), None)
-    if not user: return
-    if user["role"]=="chief":
-        text = ("👨‍💼 Начальник:\n📝 Создать задачу\n📋 Мои задачи\n👥 Сотрудники\n🔄 Изменить роли\n📊 Статистика\n"
-                "➕ /add_user\n⚙️ /set_role\n👑 /set_chief")
+    user = next((u for u in users if u["tg_id"] == tg_id), None)
+    if user and user["role"] == "chief":
+        help_text = "👨‍💼 Команды начальника:\n📝 Создать задачу\n📋 Мои задачи\n👥 Сотрудники\n🔄 Изменить роли\n📊 Статистика"
     else:
-        text = "👨‍💼 Менеджер:\n📋 Мои задачи\n✅ Выполненные\n❓ Помощь"
-    await update.message.reply_text(text)
+        help_text = "👨‍💼 Команды сотрудника:\n📋 Мои задачи\n✅ Выполненные\n❓ Помощь"
+    await update.message.reply_text(help_text)
 
-# --- Добавление пользователя ---
-async def add_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- ConversationHandler для задачи ---
+async def task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     users = load_users()
-    user = next((u for u in users if u["tg_id"]==tg_id), None)
-    if not user or user["role"]!="chief":
-        await update.message.reply_text("❌ Только начальник может добавлять пользователей")
+    user = next((u for u in users if u["tg_id"] == tg_id), None)
+    if not user or user["role"] != "chief":
+        await update.message.reply_text("❌ Только начальник может создавать задачи.")
         return ConversationHandler.END
-    await update.message.reply_text("Введите TG ID нового пользователя:")
-    return ADD_USER
+    await update.message.reply_text("Введите текст задачи:")
+    return TASK_TEXT
 
-async def add_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    new_id = update.message.text
-    users = load_users()
-    if any(u["tg_id"]==new_id for u in users):
-        await update.message.reply_text("❌ Пользователь уже существует")
-        return ConversationHandler.END
-    chief_id = str(update.effective_user.id)
-    users.append({"tg_id":new_id,"role":"manager","chief_id":chief_id})
-    save_users(users)
-    await update.message.reply_text(f"✅ Пользователь {new_id} добавлен как менеджер под вашим руководством")
-    return ConversationHandler.END
-
-# --- Изменение роли ---
-async def set_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def task_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["task_text"] = update.message.text
     tg_id = str(update.effective_user.id)
     users = load_users()
-    user = next((u for u in users if u["tg_id"]==tg_id), None)
-    if not user or user["role"]!="chief":
-        await update.message.reply_text("❌ Только начальник может менять роли")
+    subs = [u for u in users if u["chief_id"] == tg_id and u["role"] == "manager"]
+    if not subs:
+        await update.message.reply_text("❌ У вас нет подчинённых.")
         return ConversationHandler.END
-    await update.message.reply_text("Введите TG ID сотрудника, чью роль хотите изменить:")
-    return SET_ROLE_USER
+    buttons = [[InlineKeyboardButton(f"👤 {u['tg_id']}", callback_data=f"assign:{u['tg_id']}")] for u in subs]
+    await update.message.reply_text("Выберите менеджера:", reply_markup=InlineKeyboardMarkup(buttons))
+    return CHOOSE_USER
 
-async def set_role_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.text
-    users = load_users()
-    target = next((u for u in users if u["tg_id"]==user_id), None)
-    if not target:
-        await update.message.reply_text("❌ Пользователь не найден")
-        return ConversationHandler.END
-    context.user_data["set_role_user_id"] = user_id
-    role_options = InlineKeyboardMarkup([
-        [InlineKeyboardButton("manager", callback_data="role:manager"),
-         InlineKeyboardButton("chief", callback_data="role:chief")]
-    ])
-    await update.message.reply_text(f"Выберите новую роль для {user_id}:", reply_markup=role_options)
-    return SET_ROLE_CHOICE
-
-async def set_role_choice_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def assign_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    new_role = query.data.split(":")[1]
-    user_id = context.user_data["set_role_user_id"]
-    users = load_users()
-    target = next((u for u in users if u["tg_id"]==user_id), None)
-    if target:
-        old_role = target["role"]
-        target["role"] = new_role
-        save_users(users)
-        await query.edit_message_text(f"✅ Роль пользователя {user_id} изменена: {old_role} → {new_role}")
-        try:
-            await context.bot.send_message(int(user_id), f"🎉 Ваша роль изменена! Теперь вы {new_role}")
-        except: pass
+    context.user_data["assignee_id"] = query.data.split(":")[1]
+    await query.edit_message_text("Введите дату дедлайна (DD.MM.YYYY):")
+    return DEADLINE_DATE
+
+async def deadline_date_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["deadline_date"] = update.message.text
+    await update.message.reply_text("Введите время дедлайна (HH:MM):")
+    return DEADLINE_TIME
+
+async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    date_str = context.user_data["deadline_date"]
+    time_str = update.message.text
+    try:
+        deadline = datetime.datetime.strptime(f"{date_str} {time_str}", "%d.%m.%Y %H:%M")
+        if deadline <= datetime.datetime.now():
+            await update.message.reply_text("❌ Дедлайн должен быть в будущем. Попробуйте снова:")
+            return DEADLINE_DATE
+    except ValueError:
+        await update.message.reply_text("⚠️ Неверный формат даты или времени. Попробуйте снова.")
+        return DEADLINE_DATE
+
+    tasks = load_tasks()
+    task_id = str(len(tasks) + 1)
+    chief_id = str(update.effective_user.id)
+    assignee_id = context.user_data["assignee_id"]
+    text = context.user_data["task_text"]
+    deadline_str = deadline.strftime("%Y-%m-%d %H:%M")
+
+    new_task = {"id": task_id, "chief_id": chief_id, "assignee_id": assignee_id,
+                "text": text, "deadline": deadline_str, "status": "new"}
+    tasks.append(new_task)
+    save_tasks(tasks)
+
+    # Планируем напоминания
+    schedule_deadline_reminders(task_id, chief_id, assignee_id, text, deadline_str)
+
+    # Отправляем менеджеру
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Выполнено", callback_data=f"done:{task_id}")]])
+    try:
+        await context.bot.send_message(int(assignee_id),
+            f"📝 НОВАЯ ЗАДАЧА\n\n{text}\n⏰ Дедлайн: {deadline_str}", reply_markup=keyboard)
+    except Exception as e:
+        await update.message.reply_text(f"⚠️ Не удалось отправить задачу: {e}")
+
+    await update.message.reply_text("✅ Задача создана и отправлена менеджеру.")
     return ConversationHandler.END
 
-# --- Назначение нового начальника ---
-async def set_chief(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- Обработка ReplyKeyboardMarkup (кнопки) ---
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
     tg_id = str(update.effective_user.id)
     users = load_users()
-    user = next((u for u in users if u["tg_id"]==tg_id), None)
-    if not user or user["role"]!="chief":
-        await update.message.reply_text("❌ Только начальник может назначить нового начальника")
-        return ConversationHandler.END
-    await update.message.reply_text("Введите TG ID сотрудника, которого хотите сделать начальником:")
-    return SET_CHIEF_USER
+    user = next((u for u in users if u["tg_id"] == tg_id), None)
+    if not user:
+        await update.message.reply_text("❌ Сначала /start")
+        return
 
-async def set_chief_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    new_chief_id = update.message.text
-    users = load_users()
-    target = next((u for u in users if u["tg_id"]==new_chief_id), None)
-    if not target:
-        await update.message.reply_text("❌ Пользователь не найден")
-        return ConversationHandler.END
-    target["role"] = "chief"
-    target["chief_id"] = ""
-    save_users(users)
-    await update.message.reply_text(f"✅ Пользователь {new_chief_id} теперь начальник!")
-    try:
-        await context.bot.send_message(int(new_chief_id), "🎉 Вы назначены начальником! Используйте /start для обновления меню.")
-    except: pass
-    return ConversationHandler.END
+    if text == "📝 Создать задачу" and user["role"] == "chief":
+        return await task(update, context)
+    elif text == "📋 Мои задачи":
+        await show_tasks(update, context)
+    elif text == "✅ Выполненные" and user["role"] == "manager":
+        await show_completed_tasks(update, context)
+    elif text == "❓ Помощь":
+        await help_command(update, context)
+    else:
+        await update.message.reply_text("❌ Неизвестная команда")
 
-# --- ConversationHandlers ---
-add_user_conv = ConversationHandler(
-    entry_points=[CommandHandler("add_user", add_user)],
-    states={ADD_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_user_handler)]},
-    fallbacks=[CommandHandler("cancel", lambda u,c:u.message.reply_text("Операция отменена"))]
-)
-
-set_role_conv = ConversationHandler(
-    entry_points=[CommandHandler("set_role", set_role)],
-    states={
-        SET_ROLE_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_role_user_handler)],
-        SET_ROLE_CHOICE: [CallbackQueryHandler(set_role_choice_handler, pattern="^role:")]
-    },
-    fallbacks=[CommandHandler("cancel", lambda u,c:u.message.reply_text("Операция отменена"))]
-)
-
-set_chief_conv = ConversationHandler(
-    entry_points=[CommandHandler("set_chief", set_chief)],
-    states={SET_CHIEF_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_chief_user_handler)]},
-    fallbacks=[CommandHandler("cancel", lambda u,c:u.message.reply_text("Операция отменена"))]
-)
-
-# --- Здесь добавляем также код создания задач, дедлайнов, уведомлений и mark_done ---
-# Твой уже исправленный ConversationHandler с DEADLINE_DATE и DEADLINE_TIME можно вставить сюда
-
+# --- Запуск бота ---
 app = Application.builder().token("8377447196:AAHPqerv_P6zgKvL9GIv_4mmz4ygSK5GOGE").build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("help", help_command))
-app.add_handler(add_user_conv)
-app.add_handler(set_role_conv)
-app.add_handler(set_chief_conv)
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+# ConversationHandler для создания задачи
+task_conv = ConversationHandler(
+    entry_points=[MessageHandler(filters.Regex("^📝 Создать задачу$"), task)],
+    states={
+        TASK_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, task_text_handler)],
+        CHOOSE_USER: [CallbackQueryHandler(assign_task, pattern="^assign:")],
+        DEADLINE_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_date_handler)],
+        DEADLINE_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_time_handler)]
+    },
+    fallbacks=[CommandHandler("cancel", lambda u,c: u.message.reply_text("Операция отменена."))]
+)
+app.add_handler(task_conv)
 
 print("Бот запущен...")
 app.run_polling()
