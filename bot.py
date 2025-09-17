@@ -183,7 +183,7 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
             return DEADLINE_DATE
     except ValueError:
         await update.message.reply_text("⚠️ Неверный формат даты или времени. Попробуйте снова.")
-        return DEADLINE_DATE
+        return DEADLINE_TIME
 
     tasks = load_tasks()
     task_id = str(len(tasks) + 1)
