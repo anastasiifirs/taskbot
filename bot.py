@@ -238,28 +238,47 @@ async def deadline_date_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = update.message.text.strip()
-    
-    # Упрощенная проверка времени - принимаем различные форматы
-    time_match = re.match(r'^(\d{1,2}):(\d{2})$', time_str)
-    if not time_match:
-        await update.message.reply_text("❌ Неверный формат времени. Используйте ЧЧ:MM (например: 14:30 или 9:00):")
-        return DEADLINE_TIME
+    logger.info(f"Получено время: '{time_str}'")
     
     try:
-        hours = int(time_match.group(1))
-        minutes = int(time_match.group(2))
-        
-        # Проверяем корректность времени
-        if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
-            await update.message.reply_text("❌ Неверное время. Часы: 0-23, минуты: 0-59:")
+        # Простая проверка - пытаемся разобрать время
+        if ':' not in time_str:
+            await update.message.reply_text("❌ Используйте формат ЧЧ:MM (например: 14:30)")
             return DEADLINE_TIME
         
-        date_str = context.user_data["deadline_date"]
+        parts = time_str.split(':')
+        if len(parts) != 2:
+            await update.message.reply_text("❌ Используйте формат ЧЧ:MM (например: 14:30)")
+            return DEADLINE_TIME
+        
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        
+        logger.info(f"Разобрано: hours={hours}, minutes={minutes}")
+        
+        # Проверяем корректность времени
+        if hours < 0 or hours > 23:
+            await update.message.reply_text("❌ Часы должны быть от 0 до 23:")
+            return DEADLINE_TIME
+        
+        if minutes < 0 or minutes > 59:
+            await update.message.reply_text("❌ Минуты должны быть от 0 до 59:")
+            return DEADLINE_TIME
+        
+        date_str = context.user_data.get("deadline_date")
+        if not date_str:
+            await update.message.reply_text("❌ Ошибка: дата не найдена. Начните заново.")
+            return ConversationHandler.END
+        
+        logger.info(f"Дата из контекста: '{date_str}'")
+        
         day, month, year = map(int, date_str.split('.'))
         
         # Создаем datetime объект
         deadline_dt = datetime.datetime(year, month, day, hours, minutes)
         now = datetime.datetime.now()
+        
+        logger.info(f"Создан deadline_dt: {deadline_dt}, now: {now}")
         
         if deadline_dt <= now:
             await update.message.reply_text("❌ Дедлайн должен быть в будущем. Введите дату заново:")
@@ -269,8 +288,13 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
         tasks = load_tasks()
         task_id = str(len(tasks) + 1)
         chief_id = str(update.effective_user.id)
-        assignee_id = context.user_data["assignee_id"]
-        text = context.user_data["task_text"]
+        assignee_id = context.user_data.get("assignee_id")
+        text = context.user_data.get("task_text", "")
+        
+        if not assignee_id or not text:
+            await update.message.reply_text("❌ Ошибка: данные задачи потеряны. Начните заново.")
+            return ConversationHandler.END
+        
         deadline_str = deadline_dt.strftime("%Y-%m-%d %H:%M")
 
         new_task = {
@@ -318,14 +342,14 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text(f"✅ Задача создана и отправлена менеджеру {assignee_name}.")
         return ConversationHandler.END
         
-    except Exception as e:
-        logger.error(f"Ошибка в обработке времени: {e}")
-        await update.message.reply_text("❌ Ошибка при обработке времени. Попробуйте снова:")
+    except ValueError as e:
+        logger.error(f"ValueError в обработке времени: {e}")
+        await update.message.reply_text("❌ Неверный формат времени. Используйте числа (например: 14:30):")
         return DEADLINE_TIME
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Операция отменена.")
-    return ConversationHandler.END
+    except Exception as e:
+        logger.error(f"Общая ошибка в обработке времени: {e}", exc_info=True)
+        await update.message.reply_text("❌ Произошла ошибка. Попробуйте снова:")
+        return DEADLINE_TIME
 
 # ---------- Mark task as done ----------
 async def mark_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
