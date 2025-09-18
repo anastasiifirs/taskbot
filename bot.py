@@ -267,6 +267,7 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
         
         date_str = context.user_data.get("deadline_date")
         if not date_str:
+            logger.error("Дата не найдена в context.user_data")
             await update.message.reply_text("❌ Ошибка: дата не найдена. Начните заново.")
             return ConversationHandler.END
         
@@ -291,7 +292,10 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
         assignee_id = context.user_data.get("assignee_id")
         text = context.user_data.get("task_text", "")
         
+        logger.info(f"Данные задачи: chief_id={chief_id}, assignee_id={assignee_id}, text={text}")
+        
         if not assignee_id or not text:
+            logger.error("Данные задачи потеряны")
             await update.message.reply_text("❌ Ошибка: данные задачи потеряны. Начните заново.")
             return ConversationHandler.END
         
@@ -307,16 +311,21 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
         }
         tasks.append(new_task)
         save_tasks(tasks)
+        logger.info(f"Задача сохранена: {new_task}")
 
         # Планируем напоминания
-        schedule_deadline_reminders(
-            context.application, 
-            task_id, 
-            int(chief_id), 
-            int(assignee_id), 
-            text, 
-            deadline_dt
-        )
+        try:
+            schedule_deadline_reminders(
+                context.application, 
+                task_id, 
+                int(chief_id), 
+                int(assignee_id), 
+                text, 
+                deadline_dt
+            )
+            logger.info("Напоминания запланированы")
+        except Exception as e:
+            logger.error(f"Ошибка при планировании напоминаний: {e}")
 
         # Отправляем задачу менеджеру
         users = load_users()
@@ -331,6 +340,7 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
                 f"📝 НОВАЯ ЗАДАЧА\n\n{text}\n⏰ Дедлайн: {deadline_dt.strftime('%d.%m.%Y %H:%M')}",
                 reply_markup=keyboard
             )
+            logger.info(f"Задача отправлена менеджеру {assignee_id}")
         except Exception as e:
             logger.error(f"Не удалось отправить задачу сотруднику: {e}")
             await update.message.reply_text(f"⚠️ Не удалось отправить задачу сотруднику: {e}")
@@ -343,11 +353,11 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return ConversationHandler.END
         
     except ValueError as e:
-        logger.error(f"ValueError в обработке времени: {e}")
+        logger.error(f"ValueError в обработке времени: {e}", exc_info=True)
         await update.message.reply_text("❌ Неверный формат времени. Используйте числа (например: 14:30):")
         return DEADLINE_TIME
     except Exception as e:
-        logger.error(f"Общая ошибка в обработке времени: {e}", exc_info=True)
+        logger.error(f"ОБЩАЯ ОШИБКА в обработке времени: {e}", exc_info=True)
         await update.message.reply_text("❌ Произошла ошибка. Попробуйте снова:")
         return DEADLINE_TIME
 
