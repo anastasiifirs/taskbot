@@ -351,6 +351,10 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("❌ Произошла ошибка. Попробуйте снова:")
         return DEADLINE_TIME
 
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Операция отменена.")
+    return ConversationHandler.END
+
 # ---------- Mark task as done ----------
 async def mark_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
