@@ -222,7 +222,7 @@ async def deadline_date_handler(update: Update, context: ContextTypes.DEFAULT_TY
     date_str = update.message.text.strip()
     
     if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', date_str):
-        await update.message.reply_text("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ (например: 20.09.2025):")
+        await update.message.reply_text("❌ Неверный формат дата. Используйте ДД.ММ.ГГГГ (например: 20.09.2025):")
         return DEADLINE_DATE
     
     try:
@@ -230,7 +230,7 @@ async def deadline_date_handler(update: Update, context: ContextTypes.DEFAULT_TY
         # Проверяем корректность даты
         datetime.datetime(year, month, day)
         context.user_data["deadline_date"] = date_str
-        await update.message.reply_text("Введите время дедлайна в формате ЧЧ:MM (например: 14:30):")
+        await update.message.reply_text("Введите время дедлайна в формате ЧЧ:MM (например: 14:30 или 9:00):")
         return DEADLINE_TIME
     except ValueError:
         await update.message.reply_text("❌ Неверная дата. Проверьте правильность ввода (например: 20.09.2025):")
@@ -239,13 +239,15 @@ async def deadline_date_handler(update: Update, context: ContextTypes.DEFAULT_TY
 async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = update.message.text.strip()
     
-    # Простая проверка формата ЧЧ:MM
-    if not re.match(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$', time_str):
-        await update.message.reply_text("❌ Неверный формат времени. Используйте ЧЧ:MM (например: 14:30):")
+    # Упрощенная проверка времени - принимаем различные форматы
+    time_match = re.match(r'^(\d{1,2}):(\d{2})$', time_str)
+    if not time_match:
+        await update.message.reply_text("❌ Неверный формат времени. Используйте ЧЧ:MM (например: 14:30 или 9:00):")
         return DEADLINE_TIME
     
     try:
-        hours, minutes = map(int, time_str.split(':'))
+        hours = int(time_match.group(1))
+        minutes = int(time_match.group(2))
         
         # Проверяем корректность времени
         if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
