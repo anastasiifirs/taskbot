@@ -215,32 +215,73 @@ async def deadline_date_handler(update: Update, context: ContextTypes.DEFAULT_TY
 async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = update.message.text.strip()
     if not re.match(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$', time_str):
-        await update.message.reply_text("❌ Неверный формат времени. Используйте ЧЧ:MM:")
+        await update.message.reply_text("❌ Неверный формат времени. Используйте ЧЧ:MM (например: 14:30):")
         return DEADLINE_TIME
-    hours, minutes = map(int, time_str.split(':'))
-    day, month, year = map(int, context.user_data["deadline_date"].split('.'))
-    deadline_dt = datetime.datetime(year, month, day, hours, minutes, tzinfo=TZ)
-    now = datetime.datetime.now(TZ)
-    if deadline_dt <= now:
-        await update.message.reply_text("❌ Дедлайн должен быть в будущем. Введите дату заново:")
-        return DEADLINE_DATE
-    tasks = load_tasks()
-    task_id = str(len(tasks) + 1)
-    chief_id = str(update.effective_user.id)
-    assignee_id = context.user_data.get("assignee_id")
-    text = context.user_data.get("task_text", "").strip()
-    deadline_iso = deadline_dt.isoformat()
-    new_task = {"id": task_id, "chief_id": chief_id, "assignee_id": assignee_id,
-                "text": text, "deadline": deadline_iso, "status": "new"}
-    tasks.append(new_task)
-    save_tasks(tasks)
-    schedule_deadline_reminders_via_jobqueue(context.application, task_id, int(chief_id), int(assignee_id), text, deadline_dt)
-    await update.message.reply_text(f"✅ Задача создана и отправлена менеджеру.")
-    context.user_data.pop("task_text", None)
-    context.user_data.pop("assignee_id", None)
-    context.user_data.pop("deadline_date", None)
-    context.user_data["conversation_active"] = False
-    return ConversationHandler.END
+    try:
+        hours, minutes = map(int, time_str.split(':'))
+        date_str = context.user_data.get("deadline_date")
+        day, month, year = map(int, date_str.split('.'))
+        # timezone-aware datetime в TZ
+        deadline_dt = datetime.datetime(year, month, day, hours, minutes, tzinfo=TZ)
+        now = datetime.datetime.now(TZ)
+        if deadline_dt <= now:
+            await update.message.reply_text("❌ Дедлайн должен быть в будущем. Введите дату заново:")
+            return DEADLINE_DATE
+
+        # сохраняем задачу (deadline в ISO)
+        tasks = load_tasks()
+        task_id = str(len(tasks) + 1)
+        chief_id = str(update.effective_user.id)
+        assignee_id = context.user_data.get("assignee_id")
+        text = context.user_data.get("task_text", "").strip()
+        deadline_iso = deadline_dt.isoformat()
+
+        new_task = {
+            "id": task_id,
+            "chief_id": chief_id,
+            "assignee_id": assignee_id,
+            "text": text,
+            "deadline": deadline_iso,
+            "status": "new"
+        }
+        tasks.append(new_task)
+        save_tasks(tasks)
+
+        # планируем напоминания через job_queue
+        schedule_deadline_reminders_via_jobqueue(context.application, task_id, int(chief_id), int(assignee_id), text, deadline_dt)
+
+        # отправляем задачу менеджеру
+        users = load_users()
+        assignee = next((u for u in users if u["tg_id"] == assignee_id), None)
+        assignee_name = f"{assignee['name']} {assignee['surname']}" if assignee else assignee_id
+
+        keyboard_task = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Выполнено", callback_data=f"done:{task_id}")]])
+        try:
+            await context.bot.send_message(
+                int(assignee_id),
+                f"📝 НОВАЯ ЗАДАЧА\n\n{text}\n⏰ Дедлайн: {deadline_dt.strftime('%d.%m.%Y %H:%M')}",
+                reply_markup=keyboard_task
+            )
+        except Exception as e:
+            logger.exception("Не удалось отправить задачу менеджеру: %s", e)
+            await update.message.reply_text(f"⚠️ Не удалось отправить задачу сотруднику: {e}")
+
+        # очищаем данные из user_data
+        context.user_data.pop("task_text", None)
+        context.user_data.pop("assignee_id", None)
+        context.user_data.pop("deadline_date", None)
+        context.user_data["conversation_active"] = False
+
+        # отправляем главное меню начальника
+        keyboard_main = get_main_keyboard("chief")
+        await update.message.reply_text(f"✅ Задача создана и отправлена менеджеру {assignee_name}.", reply_markup=keyboard_main)
+
+        return ConversationHandler.END
+
+    except Exception as e:
+        logger.exception("Ошибка в deadline_time_handler: %s", e)
+        await update.message.reply_text("❌ Ошибка при обработке времени. Попробуйте снова:")
+        return DEADLINE_TIME
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["conversation_active"] = False
