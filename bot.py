@@ -18,7 +18,8 @@ USERS_FILE = "users.csv"
 TASKS_FILE = "tasks.csv"
 
 # ---------- Состояния ConversationHandler ----------
-REGISTER_NAME, REGISTER_SURNAME, TASK_TEXT, CHOOSE_USER, DEADLINE_DATE, DEADLINE_TIME = range(6)
+REGISTER_NAME, REGISTER_SURNAME, TASK_TEXT, CHOOSE_USER, DEADLINE_DATE, DEADLINE_TIME, \
+CHOOSE_USER_FOR_ROLE, CONFIRM_ROLE_CHANGE = range(8)
 
 # ---------- CSV ----------
 def load_csv(filename, fieldnames):
@@ -174,9 +175,21 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = next((u for u in users if u["tg_id"] == tg_id), None)
     
     if user and user["role"] == "chief":
-        help_text = "👨‍💼 Команды для начальника:\n📝 Создать задачу\n📋 Мои задачи\n👥 Сотрудники\n🔄 Изменить роли\n📊 Статистика"
+        help_text = (
+            "👨‍💼 Команды для начальника:\n"
+            "📝 Создать задачу - назначить новую задачу\n"
+            "📋 Мои задачи - просмотреть все задачи\n"
+            "👥 Сотрудники - список ваших подчиненных\n"
+            "🔄 Изменить роли - изменить роль сотрудника\n"
+            "📊 Статистика - отчет по выполнению задач"
+        )
     else:
-        help_text = "👨‍💼 Команды для сотрудника:\n📋 Мои задачи\n✅ Выполненные\n❓ Помощь"
+        help_text = (
+            "👨‍💼 Команды для сотрудника:\n"
+            "📋 Мои задачи - просмотреть текущие задачи\n"
+            "✅ Выполненные - просмотреть выполненные задачи\n"
+            "❓ Помощь - показать эту справку"
+        )
     
     await update.message.reply_text(help_text)
 
@@ -361,6 +374,119 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("❌ Произошла ошибка. Попробуйте снова:")
         return DEADLINE_TIME
 
+# --- Функции для изменения ролей ---
+async def change_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tg_id = str(update.effective_user.id)
+    users = load_users()
+    user = next((u for u in users if u["tg_id"] == tg_id), None)
+    
+    if not user or user["role"] != "chief":
+        await update.message.reply_text("❌ Только начальник может изменять роли.")
+        return ConversationHandler.END
+    
+    subs = [u for u in users if u["chief_id"] == tg_id]
+    
+    if not subs:
+        await update.message.reply_text("📭 У вас нет сотрудников для изменения ролей.")
+        return ConversationHandler.END
+    
+    buttons = []
+    for u in subs:
+        role_emoji = "👑" if u["role"] == "chief" else "👤"
+        buttons.append([InlineKeyboardButton(
+            f"{role_emoji} {u['name']} {u['surname']} ({u['role']})", 
+            callback_data=f"role_user:{u['tg_id']}"
+        )])
+    
+    keyboard = InlineKeyboardMarkup(buttons)
+    await update.message.reply_text(
+        "Выберите сотрудника для изменения роли:",
+        reply_markup=keyboard
+    )
+    return CHOOSE_USER_FOR_ROLE
+
+async def choose_user_for_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.data.split(":")[1]
+    context.user_data["role_user_id"] = user_id
+    
+    users = load_users()
+    user = next((u for u in users if u["tg_id"] == user_id), None)
+    
+    if not user:
+        await query.edit_message_text("❌ Сотрудник не найден.")
+        return ConversationHandler.END
+    
+    current_role = user["role"]
+    new_role = "manager" if current_role == "chief" else "chief"
+    
+    context.user_data["new_role"] = new_role
+    context.user_data["current_role"] = current_role
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Да", callback_data="confirm_role:yes")],
+        [InlineKeyboardButton("❌ Нет", callback_data="confirm_role:no")]
+    ])
+    
+    await query.edit_message_text(
+        f"Изменить роль сотрудника {user['name']} {user['surname']}?\n"
+        f"Текущая роль: {current_role}\n"
+        f"Новая роль: {new_role}\n\n"
+        f"Подтвердите изменение:",
+        reply_markup=keyboard
+    )
+    return CONFIRM_ROLE_CHANGE
+
+async def confirm_role_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    confirmation = query.data.split(":")[1]
+    
+    if confirmation == "no":
+        await query.edit_message_text("❌ Изменение роли отменено.")
+        return ConversationHandler.END
+    
+    user_id = context.user_data["role_user_id"]
+    new_role = context.user_data["new_role"]
+    current_role = context.user_data["current_role"]
+    
+    users = load_users()
+    user = next((u for u in users if u["tg_id"] == user_id), None)
+    
+    if not user:
+        await query.edit_message_text("❌ Сотрудник не найден.")
+        return ConversationHandler.END
+    
+    # Сохраняем старую роль для сообщения
+    old_role = user["role"]
+    user["role"] = new_role
+    save_users(users)
+    
+    # Отправляем уведомление сотруднику
+    try:
+        role_text = "начальником" if new_role == "chief" else "менеджером"
+        await context.bot.send_message(
+            chat_id=int(user_id),
+            text=f"🎉 Ваша роль изменена! Теперь вы {role_text}.\n\n"
+                 f"Используйте /start для обновления меню."
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления сотруднику: {e}")
+    
+    await query.edit_message_text(
+        f"✅ Роль сотрудника {user['name']} {user['surname']} изменена:\n"
+        f"С {old_role} на {new_role}"
+    )
+    
+    # Очищаем данные
+    for key in ["role_user_id", "new_role", "current_role"]:
+        context.user_data.pop(key, None)
+    
+    return ConversationHandler.END
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Операция отменена.")
     return ConversationHandler.END
@@ -538,9 +664,20 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # Добавляем обработчики
+    # Изменение ролей (ДОБАВЬТЕ ЭТОТ БЛОК)
+    role_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^🔄 Изменить роли$"), change_role)],
+        states={
+            CHOOSE_USER_FOR_ROLE: [CallbackQueryHandler(choose_user_for_role, pattern="^role_user:")],
+            CONFIRM_ROLE_CHANGE: [CallbackQueryHandler(confirm_role_change, pattern="^confirm_role:")],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    # Добавляем обработчики (ДОБАВЬТЕ role_conv)
     app.add_handler(register_conv)
     app.add_handler(task_conv)
+    app.add_handler(role_conv)  # ← ДОБАВЬТЕ ЭТУ СТРОЧКУ
     app.add_handler(CallbackQueryHandler(mark_done, pattern="^done:"))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
