@@ -227,26 +227,14 @@ async def deadline_date_handler(update: Update, context: ContextTypes.DEFAULT_TY
 async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = update.message.text.strip()
     
-    # Убираем возможные лишние символы
-    time_str = time_str.replace(' ', '').replace(':', '').replace('.', '').replace(',', '')
-    
-    # Проверяем, что в строке только цифры и длина 3 или 4 символа
-    if not time_str.isdigit() or len(time_str) not in [3, 4]:
+    # Простая проверка формата времени ЧЧ:MM
+    if not re.match(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$', time_str):
         await update.message.reply_text("❌ Неверный формат времени. Используйте ЧЧ:MM (например: 14:30):")
         return DEADLINE_TIME
     
     try:
-        # Форматируем время в правильный формат
-        if len(time_str) == 3:
-            # Если введено 3 цифры (например: 930 → 09:30)
-            hours = int(time_str[0])
-            minutes = int(time_str[1:3])
-            formatted_time = f"0{hours}:{minutes:02d}"
-        else:
-            # Если введено 4 цифры (например: 1430 → 14:30)
-            hours = int(time_str[:2])
-            minutes = int(time_str[2:4])
-            formatted_time = f"{hours:02d}:{minutes:02d}"
+        # Разбираем время
+        hours, minutes = map(int, time_str.split(':'))
         
         # Проверяем корректность часов и минут
         if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
@@ -302,9 +290,8 @@ async def deadline_time_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return ConversationHandler.END
         
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка при обработке времени: {str(e)}. Попробуйте снова:")
+        await update.message.reply_text(f"❌ Ошибка при обработке времени. Попробуйте снова:")
         return DEADLINE_TIME
-
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Операция отменена.")
