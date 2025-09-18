@@ -581,9 +581,6 @@ async def show_employees(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message += f"{role_emoji} {sub['name']} {sub['surname']} - {sub['role']}\n"
         await update.message.reply_text(message)
 
-async def change_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔄 Функция изменения ролей будет реализована в ближайшее время")
-
 async def show_statistics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     tasks = load_tasks()
