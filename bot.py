@@ -131,7 +131,7 @@ def load_users():
             
 def save_user(user):
     """Сохранение одного пользователя в БД"""
-    global temp_users  # ДОБАВЬТЕ ЭТО В НАЧАЛО ФУНКЦИИ
+    global temp_users
     conn = None
     try:
         conn = get_db_connection()
@@ -316,6 +316,33 @@ def is_user_subordinate(user_id, chief_id, users=None):
     # Рекурсивная проверка по цепочке начальников
     return is_user_subordinate(current_chief_id, chief_id, users)
 
+def filter_old_tasks(tasks, max_days_old=2):
+    """Фильтрует задачи, выполненные более чем max_days_old дней назад"""
+    now = datetime.datetime.now()
+    filtered_tasks = []
+    
+    for task in tasks:
+        if task.get("status") != "done":
+            # Невыполненные задачи всегда показываем
+            filtered_tasks.append(task)
+        else:
+            # Для выполненных задач проверяем дату
+            try:
+                if isinstance(task['deadline'], str):
+                    deadline_dt = datetime.datetime.strptime(task['deadline'], "%Y-%m-%d %H:%M")
+                else:
+                    deadline_dt = task['deadline']
+                
+                # Проверяем, не прошло ли более max_days_old дней с дедлайна
+                days_passed = (now - deadline_dt).days
+                if days_passed <= max_days_old:
+                    filtered_tasks.append(task)
+            except (ValueError, KeyError):
+                # Если не удалось разобрать дату, показываем задачу
+                filtered_tasks.append(task)
+    
+    return filtered_tasks
+
 # ---------- Клавиатуры ----------
 def get_main_keyboard(role):
     if role == "director":
@@ -407,14 +434,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["tg_id"] = tg_id
     await update.message.reply_text("👋 Добро пожаловать! Введите ваше имя:")
     return REGISTER_NAME
-
+    
 async def register_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["name"] = update.message.text.strip()
     await update.message.reply_text("Введите вашу фамилию:")
     return REGISTER_SURNAME
 
 async def register_surname(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global temp_users  # ДОБАВЬТЕ ЭТО В НАЧАЛО ФУНКЦИИ
+    global temp_users
     surname = update.message.text.strip()
     context.user_data["surname"] = surname
     tg_id = context.user_data["tg_id"]
@@ -432,9 +459,8 @@ async def register_surname(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "chief_id": None,
             "department": "management"
         }
-        save_user(new_user)
-        # Добавляем также во временное хранилище на всякий случай
-        temp_users.append(new_user)
+        save_user(new_user)  # Эта функция уже сохраняет во временное хранилище
+        # УБЕРИТЕ ЭТУ СТРОКУ: temp_users.append(new_user)
         keyboard = get_main_keyboard("director")
         await update.message.reply_text(
             f"👑 Привет, {name} {surname}! Ты зарегистрирован как ДИРЕКТОР УПРАВЛЕНИЯ.",
@@ -455,22 +481,22 @@ async def register_surname(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "chief_id": chief_id,
             "department": "general"
         }
-        save_user(new_user)
-        # Добавляем также во временное хранилище
-        temp_users.append(new_user)
+        save_user(new_user)  # Эта функция уже сохраняет во временное хранилище
+
         keyboard = get_main_keyboard("manager")
         await update.message.reply_text(
             f"👋 Привет, {name} {surname}! Ты зарегистрирован как МЕНЕДЖЕР.",
             reply_markup=keyboard
         )
         return ConversationHandler.END
-
+        
 # ---------- Task handlers ----------
 async def task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tg_id = str(update.effective_user.id)
     users = load_users()
     user = next((u for u in users if u["tg_id"] == tg_id), None)
     
+    # Проверяем роль пользователя из базы данных, а не из контекста
     if not user or user["role"] not in ["director", "chief"]:
         await update.message.reply_text("❌ Только директор и начальники могут создавать задачи.")
         return ConversationHandler.END
@@ -480,7 +506,7 @@ async def task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("Введите текст задачи:")
     return TASK_TEXT
-
+    
 async def task_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["task_text"] = update.message.text.strip()
     tg_id = str(update.effective_user.id)
@@ -491,11 +517,14 @@ async def task_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if creator_role == "director":
         # Директор видит всех сотрудников кроме себя
-        subs = [u for u in users if u["tg_id"] != creator_id and u["role"] != "director"]
-    else:  # chief
-        # Начальник видит только своих подчиненных (менеджеров)
-        subs = get_user_subordinates(creator_id, users)
-        subs = [u for u in subs if u["role"] == "manager"]  # Только менеджеры
+        subs = [u for u in users if u["tg_id"] != creator_id]
+    elif creator_role == "chief":
+        # Начальник видит только менеджеров (своих подчиненных и других менеджеров)
+        # Все менеджеры в системе
+        subs = [u for u in users if u["role"] == "manager"]
+    else:
+        await update.message.reply_text("❌ Только директор и начальники могут создавать задачи.")
+        return ConversationHandler.END
     
     if not subs:
         await update.message.reply_text("❌ Нет доступных сотрудников для назначения задачи.")
@@ -511,7 +540,7 @@ async def task_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("Выберите сотрудника:", reply_markup=InlineKeyboardMarkup(buttons))
     return CHOOSE_USER
-
+    
 async def assign_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -796,7 +825,7 @@ async def confirm_role_change(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("❌ Сотрудник не найден.")
         return ConversationHandler.END
     
-    # Сохраняем старую роль
+    # Сохраняем новую роль
     user["role"] = new_role
     
     # Обрабатываем логику изменения иерархии
@@ -811,7 +840,7 @@ async def confirm_role_change(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif new_role == "manager" and old_role == "chief":
         # Понижение начальника до менеджера
         user["department"] = None
-        # Находим нового начальника (директора или другого начальника)
+        # Находим нового начальника (директора)
         director = next((u for u in users if u["role"] == "director"), None)
         if director:
             user["chief_id"] = director["tg_id"]
@@ -819,31 +848,42 @@ async def confirm_role_change(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Переназначаем всех подчиненных бывшего начальника директору
         subordinates = get_user_subordinates(user_id, users)
         for sub in subordinates:
-            if sub["tg_id"] != user_id:  # Не переназначаем самого себя
+            if sub["tg_id"] != user_id:
                 sub["chief_id"] = director["tg_id"] if director else None
                 save_user(sub)
     
     elif new_role == "director":
-        # Назначение директором - убираем начальника и отдел
+        # Назначение директором
         user["chief_id"] = None
         user["department"] = "management"
     
     # Сохраняем изменения пользователя
     save_user(user)
     
-    # Отправляем уведомление сотруднику
+    # Принудительно обновляем данные пользователя
+    users = load_users()  # Перезагружаем пользователей
+    updated_user = next((u for u in users if u["tg_id"] == user_id), None)
+    
+    if not updated_user:
+        await query.edit_message_text("❌ Ошибка при обновлении роли.")
+        return ConversationHandler.END
+    
+    # Отправляем уведомление сотруднику с новым меню
     try:
         role_names = {
             "director": "директором управления",
-            "chief": "начальником отдела",
+            "chief": "начальником отдела", 
             "manager": "менеджером"
         }
         role_text = role_names.get(new_role, new_role)
         
+        keyboard = get_main_keyboard(new_role)
+        
         await context.bot.send_message(
             chat_id=int(user_id),
             text=f"🎉 Ваша роль изменена! Теперь вы {role_text}.\n\n"
-                 f"Используйте /start для обновления меню."
+                 f"Используйте /start для обновления меню.",
+            reply_markup=keyboard
         )
     except Exception as e:
         logger.error(f"Ошибка при отправке уведомления сотруднику: {e}")
@@ -856,7 +896,8 @@ async def confirm_role_change(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await query.edit_message_text(
         f"✅ Роль сотрудника {user['name']} {user['surname']} изменена:\n"
-        f"С {role_names.get(old_role, old_role)} на {role_names.get(new_role, new_role)}"
+        f"С {role_names.get(old_role, old_role)} на {role_names.get(new_role, new_role)}\n\n"
+        f"Сотруднику отправлено уведомление с новым меню."
     )
     
     # Очищаем данные
@@ -865,12 +906,23 @@ async def confirm_role_change(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     return ConversationHandler.END
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Операция отменена.")
-    # Очищаем user_data
-    context.user_data.clear()
-    return ConversationHandler.END
-
+async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Принудительное обновление меню"""
+    tg_id = str(update.effective_user.id)
+    users = load_users()
+    user = next((u for u in users if u["tg_id"] == tg_id), None)
+    
+    if not user:
+        await update.message.reply_text("❌ Сначала /start")
+        return
+    
+    keyboard = get_main_keyboard(user["role"])
+    role_name = "Директор управления" if user["role"] == "director" else "Начальник отдела" if user["role"] == "chief" else "Менеджер"
+    
+    await update.message.reply_text(
+        f"🔄 Меню обновлено! Ты {role_name}.",
+        reply_markup=keyboard
+    )
 # ---------- Mark task as done ----------
 async def mark_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -915,6 +967,9 @@ async def show_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         await update.message.reply_text("❌ Сначала /start")
         return
+    
+    # Фильтруем старые выполненные задачи
+    tasks = filter_old_tasks(tasks, max_days_old=2)
     
     # Определяем, какие задачи показывать в зависимости от роли
     if user["role"] == "director":
@@ -1109,7 +1164,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.lower() in ['отмена', 'cancel']:
         return await cancel(update, context)
     
-    # Обработка команд в зависимости от роли
+    # Всегда проверяем роль из базы данных, а не из кэша
     if user["role"] == "director":
         if text == "📝 Создать задачу":
             await task(update, context)
@@ -1127,7 +1182,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Неизвестная команда")
             
     elif user["role"] == "chief":
-        if text == "📝 Создать задачу":
+        if text == "📝 Создать задаче":
             await task(update, context)
         elif text == "📋 Задачи отдела":
             await show_tasks(update, context)
@@ -1149,7 +1204,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await help_command(update, context)
         else:
             await update.message.reply_text("❌ Неизвестная команда")
-
+            
 def reload_all_reminders(application: Application):
     """Восстановление всех напоминаний при запуске"""
     global temp_tasks  # ДОБАВЬТЕ ЭТО
@@ -1275,6 +1330,7 @@ def main():
     app.add_handler(CallbackQueryHandler(mark_done, pattern=r"^done:"))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CommandHandler("refresh", refresh))
 
     # Восстанавливаем напоминания
     reload_all_reminders(app)
