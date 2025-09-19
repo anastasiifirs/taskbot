@@ -11,6 +11,7 @@ from telegram.ext import (
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import json
+import time
 
 # ---------- Логирование ----------
 logging.basicConfig(
@@ -33,12 +34,17 @@ def get_db_connection():
         return conn
     except Exception as e:
         logger.error(f"Database connection error: {e}")
-        raise
+        return None
 
 def init_database():
     """Инициализация таблиц при первом запуске"""
+    conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            logger.error("Не удалось подключиться к базе данных")
+            return False
+            
         cursor = conn.cursor()
         
         # Создаем таблицу пользователей
@@ -71,17 +77,23 @@ def init_database():
         
         conn.commit()
         logger.info("Database tables initialized successfully")
+        return True
         
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
+        return False
     finally:
         if conn:
             conn.close()
 
 def load_users():
     """Загрузка всех пользователей из БД"""
+    conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            return []
+            
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users ORDER BY created_at")
         users = cursor.fetchall()
@@ -98,8 +110,12 @@ def load_users():
 
 def save_user(user):
     """Сохранение одного пользователя в БД"""
+    conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            return False
+            
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -118,17 +134,23 @@ def save_user(user):
         
         conn.commit()
         logger.info(f"Saved user {user['tg_id']} to database")
+        return True
         
     except Exception as e:
         logger.error(f"Error saving user: {e}")
+        return False
     finally:
         if conn:
             conn.close()
 
 def load_tasks():
     """Загрузка всех задач из БД"""
+    conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            return []
+            
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM tasks ORDER BY created_at")
         tasks = cursor.fetchall()
@@ -152,8 +174,12 @@ def load_tasks():
 
 def save_task(task):
     """Сохранение одной задачи в БД"""
+    conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            return None
+            
         cursor = conn.cursor()
         
         # Преобразуем строку даты в datetime
@@ -169,6 +195,7 @@ def save_task(task):
                 task['chief_id'], task['assignee_id'],
                 task['text'], deadline, task['status'], task['id']
             ))
+            task_id = task['id']
         else:
             # Вставка новой задачи
             cursor.execute("""
@@ -180,12 +207,12 @@ def save_task(task):
                 task['text'], deadline, task.get('status', 'new')
             ))
             result = cursor.fetchone()
-            task['id'] = result['id'] if result else None
+            task_id = result['id'] if result else None
         
         conn.commit()
         logger.info(f"Saved task to database: {task}")
         
-        return task['id']
+        return task_id
         
     except Exception as e:
         logger.error(f"Error saving task: {e}")
@@ -194,10 +221,16 @@ def save_task(task):
         if conn:
             conn.close()
 
+# Временное хранилище данных (если БД недоступна)
+temp_users = []
+temp_tasks = []
+
 def get_user_subordinates(chief_id, users=None):
     """Получить всех подчиненных пользователя (рекурсивно)"""
     if users is None:
         users = load_users()
+        if not users:  # Если БД недоступна, используем временное хранилище
+            users = temp_users
     
     direct_subordinates = [u for u in users if u.get('chief_id') == chief_id]
     all_subordinates = direct_subordinates.copy()
@@ -211,6 +244,8 @@ def is_user_subordinate(user_id, chief_id, users=None):
     """Проверить, является ли пользователь подчиненным"""
     if users is None:
         users = load_users()
+        if not users:  # Если БД недоступна, используем временное хранилище
+            users = temp_users
     
     user = next((u for u in users if u['tg_id'] == user_id), None)
     if not user:
@@ -1059,6 +1094,9 @@ def reload_all_reminders(application: Application):
     """Восстановление всех напоминаний при запуске"""
     try:
         tasks = load_tasks()
+        if not tasks:  # Если БД недоступна, используем временное хранилище
+            tasks = temp_tasks
+            
         now = datetime.datetime.now()
         count = 0
         
@@ -1097,13 +1135,37 @@ def main():
         logger.error("TELEGRAM_TOKEN not found in environment variables.")
         return
     
-    # Инициализируем базу данных
-    init_database()
+    # Проверяем подключение к базе данных
+    db_available = False
+    for attempt in range(3):
+        try:
+            db_available = init_database()
+            if db_available:
+                logger.info("Database connection successful")
+                break
+            else:
+                logger.warning(f"Database connection failed, attempt {attempt + 1}/3")
+                time.sleep(2)
+        except Exception as e:
+            logger.error(f"Database initialization error: {e}")
+            time.sleep(2)
     
-    # Загружаем существующие данные из БД
-    users = load_users()
-    tasks = load_tasks()
-    logger.info(f"Loaded {len(users)} users and {len(tasks)} tasks from database")
+    if not db_available:
+        logger.warning("Database is not available. Using temporary storage.")
+        # Инициализируем временное хранилище
+        global temp_users, temp_tasks
+        temp_users = []
+        temp_tasks = []
+    
+    # Загружаем существующие данные из БД или используем временное хранилище
+    if db_available:
+        users = load_users()
+        tasks = load_tasks()
+        logger.info(f"Loaded {len(users)} users and {len(tasks)} tasks from database")
+    else:
+        users = temp_users
+        tasks = temp_tasks
+        logger.info("Using temporary storage for users and tasks")
     
     app = Application.builder().token(token).build()
 
@@ -1114,44 +1176,44 @@ def main():
             REGISTER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
             REGISTER_SURNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_surname)],
         },
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex("^(отмена|cancel)$", re.IGNORECASE), cancel)],
+        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(r"^(отмена|cancel)$", re.IGNORECASE), cancel)],
     )
 
     # Создание задачи
     task_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^📝 Создать задачу$"), task)],
+        entry_points=[MessageHandler(filters.Regex(r"^📝 Создать задачу$"), task)],
         states={
             TASK_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, task_text_handler)],
-            CHOOSE_USER: [CallbackQueryHandler(assign_task, pattern="^assign:")],
+            CHOOSE_USER: [CallbackQueryHandler(assign_task, pattern=r"^assign:")],
             DEADLINE_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_date_handler)],
             DEADLINE_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_time_handler)],
         },
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex("^(отмена|cancel)$", re.IGNORECASE), cancel)],
+        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(r"^(отмена|cancel)$", re.IGNORECASE), cancel)],
     )
 
     # Изменение ролей
     role_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^🔄 Изменить роли$"), change_role)],
+        entry_points=[MessageHandler(filters.Regex(r"^🔄 Изменить роли$"), change_role)],
         states={
-            CHOOSE_USER_FOR_ROLE: [CallbackQueryHandler(choose_user_for_role, pattern="^role_user:")],
-            CHOOSE_NEW_ROLE: [CallbackQueryHandler(choose_new_role, pattern="^choose_role:")],
-            CONFIRM_ROLE_CHANGE: [CallbackQueryHandler(confirm_role_change, pattern="^confirm_role:")],
+            CHOOSE_USER_FOR_ROLE: [CallbackQueryHandler(choose_user_for_role, pattern=r"^role_user:")],
+            CHOOSE_NEW_ROLE: [CallbackQueryHandler(choose_new_role, pattern=r"^choose_role:")],
+            CONFIRM_ROLE_CHANGE: [CallbackQueryHandler(confirm_role_change, pattern=r"^confirm_role:")],
         },
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex("^(отмена|cancel)$", re.IGNORECASE), cancel)],
+        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(r"^(отмена|cancel)$", re.IGNORECASE), cancel)],
     )
 
     # Добавляем обработчики
     app.add_handler(register_conv)
     app.add_handler(task_conv)
     app.add_handler(role_conv)
-    app.add_handler(CallbackQueryHandler(mark_done, pattern="^done:"))
+    app.add_handler(CallbackQueryHandler(mark_done, pattern=r"^done:"))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # Восстанавливаем напоминания
     reload_all_reminders(app)
 
-    logger.info("Бот запущен с PostgreSQL базой данных...")
+    logger.info("Бот запущен...")
     app.run_polling()
 
 if __name__ == "__main__":
