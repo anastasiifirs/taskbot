@@ -24,9 +24,6 @@ logger = logging.getLogger(__name__)
 REGISTER_NAME, REGISTER_SURNAME, TASK_TEXT, CHOOSE_USER, DEADLINE_DATE, DEADLINE_TIME, \
 CHOOSE_USER_FOR_ROLE, CHOOSE_NEW_ROLE, CONFIRM_ROLE_CHANGE = range(9)
 
-# Временное хранилище данных (если БД недоступна)
-temp_users = []
-temp_tasks = []
 
 # ---------- Database Functions ----------
 def get_db_connection():
@@ -183,7 +180,8 @@ def load_tasks():
     try:
         conn = get_db_connection()
         if not conn:
-            return []
+            # Возвращаем временное хранилище, если БД недоступна
+            return temp_tasks
             
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM tasks ORDER BY created_at")
@@ -201,18 +199,31 @@ def load_tasks():
         
     except Exception as e:
         logger.error(f"Error loading tasks: {e}")
-        return []
+        # Возвращаем временное хранилище при ошибке
+        return temp_tasks
     finally:
         if conn:
             conn.close()
-
+            
 def save_task(task):
     """Сохранение одной задачи в БД"""
+    global temp_tasks  # ДОБАВЬТЕ ЭТО В НАЧАЛО ФУНКЦИИ
     conn = None
     try:
         conn = get_db_connection()
         if not conn:
-            return None
+            # Сохраняем во временное хранилище, если БД недоступна
+            if 'id' not in task or not task['id']:
+                # Генерируем ID для новой задачи
+                task_id = len(temp_tasks) + 1
+                task['id'] = task_id
+            else:
+                # Обновляем существующую задачу
+                temp_tasks = [t for t in temp_tasks if t['id'] != task['id']]
+            
+            temp_tasks.append(task)
+            logger.info(f"Saved task to temporary storage: {task}")
+            return task['id']
             
         cursor = conn.cursor()
         
@@ -250,11 +261,21 @@ def save_task(task):
         
     except Exception as e:
         logger.error(f"Error saving task: {e}")
-        return None
+        # Сохраняем во временное хранилище при ошибке
+        if 'id' not in task or not task['id']:
+            # Генерируем ID для новой задачи
+            task_id = len(temp_tasks) + 1
+            task['id'] = task_id
+        else:
+            # Обновляем существующую задачу
+            temp_tasks = [t for t in temp_tasks if t['id'] != task['id']]
+        
+        temp_tasks.append(task)
+        logger.info(f"Saved task to temporary storage due to error: {task}")
+        return task['id']
     finally:
         if conn:
             conn.close()
-
 # Временное хранилище данных (если БД недоступна)
 temp_users = []
 temp_tasks = []
@@ -1131,6 +1152,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def reload_all_reminders(application: Application):
     """Восстановление всех напоминаний при запуске"""
+    global temp_tasks  # ДОБАВЬТЕ ЭТО
     try:
         tasks = load_tasks()
         if not tasks:  # Если БД недоступна, используем временное хранилище
@@ -1166,7 +1188,7 @@ def reload_all_reminders(application: Application):
         
     except Exception as e:
         logger.error(f"Ошибка восстановления напоминаний: {e}")
-
+        
 # ---------- MAIN ----------
 def main():
     token = os.getenv("TELEGRAM_TOKEN")
