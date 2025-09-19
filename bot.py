@@ -24,6 +24,10 @@ logger = logging.getLogger(__name__)
 REGISTER_NAME, REGISTER_SURNAME, TASK_TEXT, CHOOSE_USER, DEADLINE_DATE, DEADLINE_TIME, \
 CHOOSE_USER_FOR_ROLE, CHOOSE_NEW_ROLE, CONFIRM_ROLE_CHANGE = range(9)
 
+# Временное хранилище данных (если БД недоступна)
+temp_users = []
+temp_tasks = []
+
 # ---------- Database Functions ----------
 def get_db_connection():
     try:
@@ -110,7 +114,8 @@ def load_users():
     try:
         conn = get_db_connection()
         if not conn:
-            return []
+            # Возвращаем временное хранилище, если БД недоступна
+            return temp_users
             
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users ORDER BY created_at")
@@ -121,18 +126,25 @@ def load_users():
         
     except Exception as e:
         logger.error(f"Error loading users: {e}")
-        return []
+        # Возвращаем временное хранилище при ошибке
+        return temp_users
     finally:
         if conn:
             conn.close()
-
+            
 def save_user(user):
     """Сохранение одного пользователя в БД"""
     conn = None
     try:
         conn = get_db_connection()
         if not conn:
-            return False
+            # Сохраняем во временное хранилище, если БД недоступна
+            # Удаляем старого пользователя с таким tg_id если существует
+            global temp_users
+            temp_users = [u for u in temp_users if u['tg_id'] != user['tg_id']]
+            temp_users.append(user)
+            logger.info(f"Saved user {user['tg_id']} to temporary storage")
+            return True
             
         cursor = conn.cursor()
         
@@ -156,11 +168,16 @@ def save_user(user):
         
     except Exception as e:
         logger.error(f"Error saving user: {e}")
+        # Сохраняем во временное хранилище при ошибке
+        global temp_users
+        temp_users = [u for u in temp_users if u['tg_id'] != user['tg_id']]
+        temp_users.append(user)
+        logger.info(f"Saved user {user['tg_id']} to temporary storage due to error")
         return False
     finally:
         if conn:
             conn.close()
-
+            
 def load_tasks():
     """Загрузка всех задач из БД"""
     conn = None
@@ -395,6 +412,9 @@ async def register_surname(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "department": "management"
         }
         save_user(new_user)
+        # Добавляем также во временное хранилище на всякий случай
+        global temp_users
+        temp_users.append(new_user)
         keyboard = get_main_keyboard("director")
         await update.message.reply_text(
             f"👑 Привет, {name} {surname}! Ты зарегистрирован как ДИРЕКТОР УПРАВЛЕНИЯ.",
@@ -416,12 +436,16 @@ async def register_surname(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "department": "general"
         }
         save_user(new_user)
+        # Добавляем также во временное хранилище
+        global temp_users
+        temp_users.append(new_user)
         keyboard = get_main_keyboard("manager")
         await update.message.reply_text(
             f"👋 Привет, {name} {surname}! Ты зарегистрирован как МЕНЕДЖЕР.",
             reply_markup=keyboard
         )
         return ConversationHandler.END
+
 
 # ---------- Task handlers ----------
 async def task(update: Update, context: ContextTypes.DEFAULT_TYPE):
