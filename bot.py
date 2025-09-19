@@ -1243,6 +1243,13 @@ def reload_all_reminders(application: Application):
         
     except Exception as e:
         logger.error(f"Ошибка восстановления напоминаний: {e}")
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена текущей операции"""
+    await update.message.reply_text("Операция отменена.")
+    # Очищаем user_data
+    context.user_data.clear()
+    return ConversationHandler.END
         
 # ---------- MAIN ----------
 def main():
