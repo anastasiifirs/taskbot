@@ -349,7 +349,7 @@ def get_main_keyboard(role):
         buttons = [
             [KeyboardButton("📝 Создать задачу"), KeyboardButton("📋 Все задачи")],
             [KeyboardButton("👥 Все сотрудники"), KeyboardButton("🔄 Изменить роли")],
-            [KeyboardButton("📊 Статистика"), KeyboardButton("🏢 Отделы")]
+            [KeyboardButton("📊 Статистика")]
         ]
     elif role == "chief":
         buttons = [
@@ -831,7 +831,7 @@ async def confirm_role_change(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Обрабатываем логику изменения иерархии
     if new_role == "chief" and old_role == "manager":
         # Повышение менеджера до начальника
-        user["department"] = f"Отдел {user['surname']}а"
+        user["department"] = f"Отдел {user['surname']}"
         # Начальник подчиняется директору
         director = next((u for u in users if u["role"] == "director"), None)
         if director:
