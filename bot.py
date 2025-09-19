@@ -134,13 +134,13 @@ def load_users():
             
 def save_user(user):
     """Сохранение одного пользователя в БД"""
+    global temp_users  # ДОБАВЬТЕ ЭТО В НАЧАЛО ФУНКЦИИ
     conn = None
     try:
         conn = get_db_connection()
         if not conn:
             # Сохраняем во временное хранилище, если БД недоступна
             # Удаляем старого пользователя с таким tg_id если существует
-            global temp_users
             temp_users = [u for u in temp_users if u['tg_id'] != user['tg_id']]
             temp_users.append(user)
             logger.info(f"Saved user {user['tg_id']} to temporary storage")
@@ -169,7 +169,6 @@ def save_user(user):
     except Exception as e:
         logger.error(f"Error saving user: {e}")
         # Сохраняем во временное хранилище при ошибке
-        global temp_users
         temp_users = [u for u in temp_users if u['tg_id'] != user['tg_id']]
         temp_users.append(user)
         logger.info(f"Saved user {user['tg_id']} to temporary storage due to error")
@@ -394,6 +393,7 @@ async def register_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return REGISTER_SURNAME
 
 async def register_surname(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global temp_users  # ДОБАВЬТЕ ЭТО В НАЧАЛО ФУНКЦИИ
     surname = update.message.text.strip()
     context.user_data["surname"] = surname
     tg_id = context.user_data["tg_id"]
@@ -413,7 +413,6 @@ async def register_surname(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         save_user(new_user)
         # Добавляем также во временное хранилище на всякий случай
-        global temp_users
         temp_users.append(new_user)
         keyboard = get_main_keyboard("director")
         await update.message.reply_text(
@@ -437,7 +436,6 @@ async def register_surname(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         save_user(new_user)
         # Добавляем также во временное хранилище
-        global temp_users
         temp_users.append(new_user)
         keyboard = get_main_keyboard("manager")
         await update.message.reply_text(
@@ -445,7 +443,6 @@ async def register_surname(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=keyboard
         )
         return ConversationHandler.END
-
 
 # ---------- Task handlers ----------
 async def task(update: Update, context: ContextTypes.DEFAULT_TYPE):
