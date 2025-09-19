@@ -27,15 +27,33 @@ CHOOSE_USER_FOR_ROLE, CHOOSE_NEW_ROLE, CONFIRM_ROLE_CHANGE = range(9)
 # ---------- Database Functions ----------
 def get_db_connection():
     try:
+        database_url = os.getenv("DATABASE_URL")
+        
+        if not database_url:
+            logger.error("DATABASE_URL not found in environment variables")
+            return None
+        
+        # Логируем для отладки (уберите в продакшене)
+        logger.info(f"Connecting to database: {database_url[:30]}...")
+        
+        # Конвертируем postgres:// в postgresql:// для совместимости
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql://", 1)
+            logger.info("Converted postgres:// to postgresql://")
+        
+        # Подключаемся с SSL для Railway
         conn = psycopg2.connect(
-            os.getenv("DATABASE_URL"),
-            cursor_factory=RealDictCursor
+            database_url,
+            cursor_factory=RealDictCursor,
+            sslmode='require'
         )
+        logger.info("Database connection successful")
         return conn
+        
     except Exception as e:
         logger.error(f"Database connection error: {e}")
         return None
-
+        
 def init_database():
     """Инициализация таблиц при первом запуске"""
     conn = None
@@ -1135,24 +1153,29 @@ def main():
         logger.error("TELEGRAM_TOKEN not found in environment variables.")
         return
     
+    # Проверяем переменные окружения
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        logger.warning("DATABASE_URL not found. Using temporary storage.")
+    
     # Проверяем подключение к базе данных
     db_available = False
-    for attempt in range(3):
-        try:
-            db_available = init_database()
-            if db_available:
-                logger.info("Database connection successful")
-                break
-            else:
-                logger.warning(f"Database connection failed, attempt {attempt + 1}/3")
+    if database_url:
+        for attempt in range(3):
+            try:
+                db_available = init_database()
+                if db_available:
+                    logger.info("Database connection successful")
+                    break
+                else:
+                    logger.warning(f"Database connection failed, attempt {attempt + 1}/3")
+                    time.sleep(2)
+            except Exception as e:
+                logger.error(f"Database initialization error: {e}")
                 time.sleep(2)
-        except Exception as e:
-            logger.error(f"Database initialization error: {e}")
-            time.sleep(2)
     
     if not db_available:
         logger.warning("Database is not available. Using temporary storage.")
-        # Инициализируем временное хранилище
         global temp_users, temp_tasks
         temp_users = []
         temp_tasks = []
@@ -1169,37 +1192,37 @@ def main():
     
     app = Application.builder().token(token).build()
 
-    # Регистрация
+    # Регистрация - ИСПРАВЛЕННЫЙ СИНТАКСИС
     register_conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             REGISTER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
             REGISTER_SURNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_surname)],
         },
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(r"^(отмена|cancel)$", re.IGNORECASE), cancel)],
+        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(r"^(отмена|cancel)$") & filters.TEXT, cancel)],
     )
 
-    # Создание задачи
+    # Создание задачи - ИСПРАВЛЕННЫЙ СИНТАКСИС
     task_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(r"^📝 Создать задачу$"), task)],
+        entry_points=[MessageHandler(filters.Regex(r"^📝 Создать задачу$") & filters.TEXT, task)],
         states={
             TASK_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, task_text_handler)],
             CHOOSE_USER: [CallbackQueryHandler(assign_task, pattern=r"^assign:")],
             DEADLINE_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_date_handler)],
             DEADLINE_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, deadline_time_handler)],
         },
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(r"^(отмена|cancel)$", re.IGNORECASE), cancel)],
+        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(r"^(отмена|cancel)$") & filters.TEXT, cancel)],
     )
 
-    # Изменение ролей
+    # Изменение ролей - ИСПРАВЛЕННЫЙ СИНТАКСИС
     role_conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex(r"^🔄 Изменить роли$"), change_role)],
+        entry_points=[MessageHandler(filters.Regex(r"^🔄 Изменить роли$") & filters.TEXT, change_role)],
         states={
             CHOOSE_USER_FOR_ROLE: [CallbackQueryHandler(choose_user_for_role, pattern=r"^role_user:")],
             CHOOSE_NEW_ROLE: [CallbackQueryHandler(choose_new_role, pattern=r"^choose_role:")],
             CONFIRM_ROLE_CHANGE: [CallbackQueryHandler(confirm_role_change, pattern=r"^confirm_role:")],
         },
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(r"^(отмена|cancel)$", re.IGNORECASE), cancel)],
+        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(r"^(отмена|cancel)$") & filters.TEXT, cancel)],
     )
 
     # Добавляем обработчики
