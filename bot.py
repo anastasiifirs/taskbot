@@ -349,17 +349,20 @@ def get_main_keyboard(role):
         buttons = [
             [KeyboardButton("📝 Создать задачу"), KeyboardButton("📋 Все задачи")],
             [KeyboardButton("👥 Все сотрудники"), KeyboardButton("🔄 Изменить роли")],
-            [KeyboardButton("📊 Статистика")]
+            [KeyboardButton("📊 Статистика")],
+            [KeyboardButton("❌ Отмена")]
         ]
     elif role == "chief":
         buttons = [
             [KeyboardButton("📝 Создать задачу"), KeyboardButton("📋 Задачи отдела")],
-            [KeyboardButton("👥 Мои сотрудники"), KeyboardButton("📊 Статистика отдела")]
+            [KeyboardButton("👥 Мои сотрудники"), KeyboardButton("📊 Статистика отдела")],
+            [KeyboardButton("❌ Отмена")]
         ]
     else:  # manager
         buttons = [
             [KeyboardButton("📋 Мои задачи"), KeyboardButton("✅ Выполненные")],
-            [KeyboardButton("❓ Помощь")]
+            [KeyboardButton("❓ Помощь")],
+            [KeyboardButton("❌ Отмена")]
         ]
     return ReplyKeyboardMarkup(buttons, resize_keyboard=True)
     
@@ -1169,7 +1172,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Обработка отмены
-    if text.lower() in ['отмена', 'cancel']:
+    if text.lower() in ['отмена', 'cancel', '❌ отмена']:
         return await cancel(update, context)
     
     # Всегда проверяем роль из базы данных, а не из кэша
