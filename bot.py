@@ -923,6 +923,14 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🔄 Меню обновлено! Ты {role_name}.",
         reply_markup=keyboard
     )
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена текущей операции"""
+    await update.message.reply_text("Операция отменена.")
+    # Очищаем user_data
+    context.user_data.clear()
+    return ConversationHandler.END
+    
 # ---------- Mark task as done ----------
 async def mark_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1243,13 +1251,6 @@ def reload_all_reminders(application: Application):
         
     except Exception as e:
         logger.error(f"Ошибка восстановления напоминаний: {e}")
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отмена текущей операции"""
-    await update.message.reply_text("Операция отменена.")
-    # Очищаем user_data
-    context.user_data.clear()
-    return ConversationHandler.END
         
 # ---------- MAIN ----------
 def main():
@@ -1299,12 +1300,12 @@ def main():
 
     # Регистрация - ИСПРАВЛЕННЫЙ СИНТАКСИС
     register_conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            REGISTER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
-            REGISTER_SURNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_surname)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel), MessageHandler(filters.Regex(r"^(отмена|cancel)$") & filters.TEXT, cancel)],
+    entry_points=[CommandHandler("start", start)],
+    states={
+        REGISTER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
+        REGISTER_SURNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_surname)],
+    },
+    fallbacks=[CommandHandler("cancel", cancel)],
     )
 
     # Создание задачи - ИСПРАВЛЕННЫЙ СИНТАКСИС
